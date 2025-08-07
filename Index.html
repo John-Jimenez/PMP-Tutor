@@ -1,0 +1,207 @@
+# Fixing and writing the HTML by avoiding f-string brace conflicts.
+import pandas as pd, json, os, textwrap
+csv_path = "/mnt/data/pmp_50_question_starter_bank.csv"
+df = pd.read_csv(csv_path)
+items = df.to_dict(orient="records")
+items_json = json.dumps(items, ensure_ascii=False)
+
+template = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>PMP Pocket Tutor — Offline</title>
+<style>
+  body{{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0;padding:0;background:#f7f7f8;color:#111}}
+  .app{{max-width:900px;margin:0 auto;padding:16px;}}
+  header{{display:flex;align-items:center;gap:12px;margin-bottom:12px;}}
+  h1{{font-size:18px;margin:0;}}
+  .card{{background:white;border-radius:12px;padding:14px;box-shadow:0 2px 8px rgba(0,0,0,0.06);}}
+  .question{{font-weight:600;margin-bottom:8px;}}
+  .opts{{list-style:none;padding:0;margin:0;}}
+  .opts li{{margin-bottom:8px;}}
+  button.opt{{display:block;width:100%;text-align:left;padding:10px;border-radius:8px;border:1px solid #e6e6e8;background:#fff;font-size:15px}}
+  button.opt.selected{{border-color:#2563eb;background:linear-gradient(180deg,#eef6ff,#fff);}}
+  .controls{{display:flex;gap:8px;margin-top:12px;}}
+  .small{{font-size:13px;color:#555;}}
+  .rationale{{margin-top:12px;padding:10px;border-radius:8px;background:#f1f5f9;border:1px solid #e6eefc;}}
+  .muted{{color:#556}}
+  .topbar{{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}}
+  .footer{{font-size:13px;color:#666;margin-top:12px;text-align:center;}}
+  .tag{{font-size:12px;padding:6px;border-radius:8px;background:#eef2ff;color:#1e3a8a;display:inline-block;margin-right:8px}}
+  .btn{{padding:10px 12px;border-radius:8px;border:0;background:#2563eb;color:#fff;font-weight:600}}
+  .btn.secondary{{background:#e6eefc;color:#123}}
+  @media (min-width:600px){{h1{{font-size:20px}}}}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="logo"><svg width="44" height="44" viewBox="0 0 24 24" fill="none"><rect width="24" height="24" rx="6" fill="#2563eb"></rect><path d="M6 12h12M6 8h12M6 16h12" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></svg></div>
+    <div>
+      <h1>PMP Pocket Tutor — Offline</h1>
+      <div class="small">50 starter questions • concise feedback • fully offline</div>
+    </div>
+  </header>
+
+  <div class="topbar">
+    <div>
+      <span class="tag" id="domainTag">Mixed</span>
+      <span class="small" id="qCount">Question 1 / {total}</span>
+    </div>
+    <div>
+      <button class="btn secondary" id="shuffleBtn">Shuffle</button>
+      <button class="btn" id="resetBtn">Reset</button>
+    </div>
+  </div>
+
+  <main class="card" id="card">
+    <div id="questionWrap">
+      <div class="question" id="questionText"></div>
+      <ul class="opts" id="optsList"></ul>
+      <div class="controls">
+        <button class="btn" id="submitBtn">Submit Answer</button>
+        <button class="btn secondary" id="showAnsBtn">Show Answer</button>
+        <button class="btn secondary" id="nextBtn">Next</button>
+      </div>
+      <div id="rationaleArea" style="display:none">
+        <div class="rationale" id="conciseRationale"></div>
+        <div class="small muted" id="referenceLine" style="margin-top:6px"></div>
+        <details style="margin-top:8px"><summary style="cursor:pointer">Explain more</summary><div style="margin-top:8px" id="expandedRationale"></div></details>
+      </div>
+    </div>
+  </main>
+
+  <div class="footer">
+    Tip: Add this page to your home screen for quick offline access. No data leaves your phone.
+  </div>
+</div>
+
+<script>
+// Embedded question data
+const ITEMS = __ITEMS_JSON__;
+
+// App state
+let indexOrder = [...Array(ITEMS.length).keys()];
+let curIdx = 0;
+let selectedOpt = null;
+let answered = false;
+
+// Utilities
+function $(id){return document.getElementById(id)}
+
+// UI render
+function renderQuestion(){
+  const idx = indexOrder[curIdx];
+  const item = ITEMS[idx];
+  $('domainTag').textContent = item.domain || 'Mixed';
+  $('qCount').textContent = `Question ${curIdx+1} / ${ITEMS.length}`;
+  $('questionText').textContent = item.question;
+  const opts = ['option_a','option_b','option_c','option_d'];
+  const ul = $('optsList');
+  ul.innerHTML = '';
+  opts.forEach((k,i)=>{
+    const li = document.createElement('li');
+    const btn = document.createElement('button');
+    btn.className='opt';
+    btn.innerHTML = `<strong>${String.fromCharCode(65+i)}.</strong> ${item[k]}`;
+    btn.onclick = ()=> selectOpt(i);
+    btn.dataset.opt = String.fromCharCode(65+i);
+    li.appendChild(btn);
+    ul.appendChild(li);
+  });
+  // reset controls
+  selectedOpt = null;
+  answered = false;
+  $('rationaleArea').style.display = 'none';
+  $('submitBtn').disabled = false;
+  // clear styles
+  document.querySelectorAll('.opt').forEach(b=>{ b.style.borderColor=''; b.style.background=''; });
+}
+
+function selectOpt(i){
+  if(answered) return;
+  // clear previous
+  document.querySelectorAll('.opt').forEach(b=>b.classList.remove('selected'));
+  const btn = document.querySelectorAll('.opt')[i];
+  btn.classList.add('selected');
+  selectedOpt = String.fromCharCode(65+i);
+}
+
+function showRationale(showCorrect){
+  const idx = indexOrder[curIdx];
+  const item = ITEMS[idx];
+  $('conciseRationale').textContent = item.concise_rationale || '';
+  $('expandedRationale').textContent = item.expanded_rationale || '';
+  $('referenceLine').textContent = item.reference || '';
+  $('rationaleArea').style.display = 'block';
+  answered = true;
+  // highlight correct / incorrect
+  document.querySelectorAll('.opt').forEach((b)=>{
+    const o = b.dataset.opt;
+    b.style.borderColor = '#e6e6e8';
+    b.style.background='';
+    if(o === item.correct_option){
+      b.style.borderColor='#16a34a';
+      b.style.background='linear-gradient(180deg,#ecfdf5,#fff)';
+    } else if (o === selectedOpt && o !== item.correct_option){
+      b.style.borderColor='#dc2626';
+      b.style.background='linear-gradient(180deg,#fff5f5,#fff)';
+    }
+  });
+  $('submitBtn').disabled = true;
+}
+
+// Controls
+document.addEventListener('DOMContentLoaded', function(){
+  $('submitBtn').onclick = ()=>{
+    if(!selectedOpt){ alert('Pick an option first.'); return; }
+    showRationale(true);
+  }
+  $('showAnsBtn').onclick = ()=>{
+    selectedOpt = null;
+    showRationale(true);
+  }
+  $('nextBtn').onclick = ()=>{
+    curIdx = (curIdx+1) % ITEMS.length;
+    renderQuestion();
+    saveState();
+  }
+  $('shuffleBtn').onclick = ()=>{
+    indexOrder = shuffle([...Array(ITEMS.length).keys()]);
+    curIdx = 0;
+    renderQuestion();
+    saveState();
+  }
+  $('resetBtn').onclick = ()=>{
+    if(confirm('Reset progress and order?')){
+      indexOrder = [...Array(ITEMS.length).keys()];
+      curIdx = 0;
+      localStorage.removeItem('ppt_state_v1');
+      renderQuestion();
+    }
+  }
+  // touch gestures simple
+  let touchX = null;
+  document.addEventListener('touchstart', e=> touchX = e.changedTouches[0].clientX );
+  document.addEventListener('touchend', e=>{ const dx = e.changedTouches[0].clientX - touchX; if(dx < -40) $('nextBtn').click(); if(dx>40) { curIdx = (curIdx-1+ITEMS.length)%ITEMS.length; renderQuestion(); } });
+  loadState();
+  renderQuestion();
+});
+
+function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]] } return a }
+
+// Persist simple state
+function saveState(){ const state = {order:indexOrder,cur:curIdx}; localStorage.setItem('ppt_state_v1', JSON.stringify(state)); }
+function loadState(){ try{ const s=JSON.parse(localStorage.getItem('ppt_state_v1')); if(s && s.order && s.order.length===ITEMS.length){ indexOrder=s.order; curIdx=s.cur||0; } }catch(e){} }
+</script>
+</body>
+</html>
+"""
+
+out_path = "/mnt/data/pmp_pocket_tutor_offline.html"
+content = template.replace("__ITEMS_JSON__", items_json).replace("{total}", str(len(items)))
+with open(out_path, "w", encoding="utf-8") as f:
+    f.write(content)
+
+out_path
